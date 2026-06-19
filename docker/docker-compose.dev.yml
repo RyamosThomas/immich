@@ -3,7 +3,7 @@
 #
 # Make sure to use the docker-compose.yml of the current release:
 #
-# https://github.com/immich-app/immich/releases/latest/download/docker-compose.yml
+# https://github.com/RyamosThomas/immich/releases/latest/download/docker-compose.yml
 #
 # The compose file on main may not be compatible with the latest release.
 
@@ -77,17 +77,17 @@ services:
     env_file:
       - .env
     environment:
-      IMMICH_REPOSITORY: immich-app/immich
-      IMMICH_REPOSITORY_URL: https://github.com/immich-app/immich
+      IMMICH_REPOSITORY: RyamosThomas/immich
+      IMMICH_REPOSITORY_URL: https://github.com/RyamosThomas/immich
       IMMICH_SOURCE_REF: local
       IMMICH_SOURCE_COMMIT: af2efbdbbddc27cd06142f22253ccbbbbeec1f55
-      IMMICH_SOURCE_URL: https://github.com/immich-app/immich/commit/af2efbdbbddc27cd06142f22253ccbbbbeec1f55
+      IMMICH_SOURCE_URL: https://github.com/RyamosThomas/immich/commit/af2efbdbbddc27cd06142f22253ccbbbbeec1f55
       IMMICH_BUILD: '9654404849'
-      IMMICH_BUILD_URL: https://github.com/immich-app/immich/actions/runs/9654404849
+      IMMICH_BUILD_URL: https://github.com/RyamosThomas/immich/actions/runs/9654404849
       IMMICH_BUILD_IMAGE: development
-      IMMICH_BUILD_IMAGE_URL: https://github.com/immich-app/immich/pkgs/container/immich-server
-      IMMICH_THIRD_PARTY_SOURCE_URL: https://github.com/immich-app/immich/
-      IMMICH_THIRD_PARTY_BUG_FEATURE_URL: https://github.com/immich-app/immich/issues
+      IMMICH_BUILD_IMAGE_URL: https://github.com/RyamosThomas/immich/pkgs/container/immich-server
+      IMMICH_THIRD_PARTY_SOURCE_URL: https://github.com/RyamosThomas/immich/
+      IMMICH_THIRD_PARTY_BUG_FEATURE_URL: https://github.com/RyamosThomas/immich/issues
       IMMICH_THIRD_PARTY_DOCUMENTATION_URL: https://docs.immich.app
       IMMICH_THIRD_PARTY_SUPPORT_URL: https://docs.immich.app/community-guides
       IMMICH_HELMET_FILE: 'true'
