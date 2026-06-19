@@ -1191,6 +1191,7 @@ export enum ApiTag {
   Tags = 'Tags',
   Timeline = 'Timeline',
   Trash = 'Trash',
+  TusUpload = 'TUS Upload',
   UsersAdmin = 'Users (admin)',
   Users = 'Users',
   Views = 'Views',

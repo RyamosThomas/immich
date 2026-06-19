@@ -34,6 +34,7 @@ import { SystemMetadataController } from 'src/controllers/system-metadata.contro
 import { TagController } from 'src/controllers/tag.controller';
 import { TimelineController } from 'src/controllers/timeline.controller';
 import { TrashController } from 'src/controllers/trash.controller';
+import { TusUploadController } from 'src/controllers/tus-upload.controller';
 import { UserAdminController } from 'src/controllers/user-admin.controller';
 import { UserController } from 'src/controllers/user.controller';
 import { VideoStreamController } from 'src/controllers/video-stream.controller';
@@ -77,6 +78,7 @@ export const controllers = [
   TagController,
   TimelineController,
   TrashController,
+  TusUploadController,
   UserAdminController,
   UserController,
   VideoStreamController,

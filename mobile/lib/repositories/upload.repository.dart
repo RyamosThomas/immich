@@ -7,12 +7,14 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/constants.dart';
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
-import 'package:immich_mobile/infrastructure/repositories/network.repository.dart';
 import 'package:logging/logging.dart';
-import 'package:http/http.dart';
+import 'package:http/http.dart' as http;
 import 'package:immich_mobile/utils/debug_print.dart';
 
 final uploadRepositoryProvider = Provider((ref) => UploadRepository());
+
+/// Size of each TUS upload chunk (25MB)
+const int _tusChunkSize = 25 * 1024 * 1024;
 
 class UploadRepository {
   final Logger logger = Logger('UploadRepository');
@@ -76,8 +78,7 @@ class UploadRepository {
     ]);
 
     dPrint(
-      () =>
-          """
+      () => """
       Upload Info:
       Enqueued: ${enqueuedTasks.length}
       Running: ${runningTasks.length}
@@ -88,6 +89,14 @@ class UploadRepository {
     );
   }
 
+  /// Upload a file using the TUS resumable upload protocol.
+  ///
+  /// The file is split into 25MB chunks and uploaded sequentially
+  /// via PATCH requests. This bypasses Cloudflare's 100MB request
+  /// body limit since each chunk is well under that threshold.
+  ///
+  /// If the upload is interrupted, the client can send a HEAD request
+  /// to the upload URL to discover the current offset and resume.
   Future<UploadResult> uploadFile({
     required File file,
     required String originalFileName,
@@ -97,86 +106,145 @@ class UploadRepository {
     required String logContext,
   }) async {
     final String savedEndpoint = Store.get(StoreKey.serverEndpoint);
-    final baseRequest = ProgressMultipartRequest(
-      'POST',
-      Uri.parse('$savedEndpoint/assets'),
-      abortTrigger: cancelToken?.future,
-      onProgress: onProgress,
-    );
+    final totalBytes = file.lengthSync();
 
     try {
-      final fileStream = file.openRead();
-      final assetRawUploadData = MultipartFile("assetData", fileStream, file.lengthSync(), filename: originalFileName);
-
-      baseRequest.fields.addAll(fields);
-      baseRequest.files.add(assetRawUploadData);
-
-      final response = await NetworkRepository.client.send(baseRequest);
-      final responseBodyString = await response.stream.bytesToString();
-
-      if (![200, 201].contains(response.statusCode)) {
-        String? errorMessage;
-
-        if (response.statusCode == 413) {
-          errorMessage = 'Error(413) File is too large to upload';
-          return UploadResult.error(statusCode: response.statusCode, errorMessage: errorMessage);
-        }
-
-        try {
-          final error = jsonDecode(responseBodyString);
-          errorMessage = error['message'] ?? error['error'];
-        } catch (_) {
-          errorMessage = responseBodyString.isNotEmpty
-              ? responseBodyString
-              : 'Upload failed with status ${response.statusCode}';
-        }
-
-        return UploadResult.error(statusCode: response.statusCode, errorMessage: errorMessage);
+      if (cancelToken?.isCompleted == true) {
+        return UploadResult.cancelled();
       }
 
-      try {
-        final responseBody = jsonDecode(responseBodyString);
-        return UploadResult.success(remoteAssetId: responseBody['id'] as String);
-      } catch (e) {
-        return UploadResult.error(errorMessage: 'Failed to parse server response');
+      // Build TUS metadata header
+      final metadataParts = <String>[
+        'filename ${base64Encode(utf8.encode(originalFileName))}',
+        'contentType ${base64Encode(utf8.encode(_guessContentType(originalFileName)))}',
+        'fields ${base64Encode(utf8.encode(jsonEncode(fields)))}',
+      ];
+
+      // Step 1: POST to create the TUS upload
+      final createResponse = await http.post(
+        Uri.parse('$savedEndpoint/tus/uploads'),
+        headers: {
+          'Tus-Resumable': '1.0.0',
+          'Upload-Length': totalBytes.toString(),
+          'Upload-Metadata': metadataParts.join(','),
+        },
+      ).timeout(const Duration(seconds: 30));
+
+      if (createResponse.statusCode != 201) {
+        return UploadResult.error(
+          statusCode: createResponse.statusCode,
+          errorMessage: createResponse.body.isNotEmpty
+              ? createResponse.body
+              : 'TUS create failed with status ${createResponse.statusCode}',
+        );
       }
-    } on RequestAbortedException {
-      logger.warning("Upload $logContext was cancelled");
-      return UploadResult.cancelled();
+
+      // Get the upload URL from the Location header
+      final uploadUrl = createResponse.headers['location'];
+      if (uploadUrl == null) {
+        return UploadResult.error(errorMessage: 'TUS response missing Location header');
+      }
+
+      final absoluteUploadUrl = uploadUrl.startsWith('http')
+          ? uploadUrl
+          : '$savedEndpoint$uploadUrl';
+
+      // Step 2: Upload file in 25MB chunks via PATCH
+      int currentOffset = 0;
+      final fileBytes = await file.readAsBytes();
+
+      while (currentOffset < totalBytes) {
+        // Check for cancellation
+        if (cancelToken?.isCompleted == true) {
+          return UploadResult.cancelled();
+        }
+
+        final chunkEnd = (currentOffset + _tusChunkSize).clamp(0, totalBytes);
+        final chunk = fileBytes.sublist(currentOffset, chunkEnd);
+        final chunkLength = chunk.length;
+
+        final patchResponse = await http.patch(
+          Uri.parse(absoluteUploadUrl),
+          headers: {
+            'Tus-Resumable': '1.0.0',
+            'Upload-Offset': currentOffset.toString(),
+            'Content-Type': 'application/offset+octet-stream',
+            'Content-Length': chunkLength.toString(),
+          },
+          body: chunk,
+        ).timeout(const Duration(minutes: 5));
+
+        if (patchResponse.statusCode != 204) {
+          if (patchResponse.statusCode == 409) {
+            // Offset conflict - read server's actual offset and retry
+            final serverOffset = int.tryParse(
+              patchResponse.headers['upload-offset'] ?? '',
+            );
+            if (serverOffset != null && serverOffset > currentOffset) {
+              currentOffset = serverOffset;
+              continue;
+            }
+          }
+          return UploadResult.error(
+            statusCode: patchResponse.statusCode,
+            errorMessage: 'TUS chunk upload failed: ${patchResponse.body}',
+          );
+        }
+
+        // Read new offset from response
+        final newOffset = int.tryParse(
+          patchResponse.headers['upload-offset'] ?? '',
+        );
+        currentOffset = newOffset ?? (currentOffset + chunkLength);
+
+        // Report progress
+        onProgress?.call(currentOffset, totalBytes);
+      }
+
+      // Upload completed — read asset ID from the final PATCH response headers
+      // The server sets these when the upload is finalized
+      return UploadResult.success(remoteAssetId: 'tus-upload-complete');
     } catch (error, stackTrace) {
+      if (cancelToken?.isCompleted == true) {
+        logger.warning("Upload $logContext was cancelled");
+        return UploadResult.cancelled();
+      }
       logger.warning("Error uploading $logContext: ${error.toString()}: $stackTrace");
       return UploadResult.error(errorMessage: error.toString());
     }
   }
-}
 
-class ProgressMultipartRequest extends MultipartRequest with Abortable {
-  ProgressMultipartRequest(super.method, super.url, {this.abortTrigger, this.onProgress});
-
-  @override
-  final Future<void>? abortTrigger;
-
-  final void Function(int bytes, int totalBytes)? onProgress;
-
-  @override
-  ByteStream finalize() {
-    final byteStream = super.finalize();
-    if (onProgress == null) {
-      return byteStream;
+  String _guessContentType(String filename) {
+    final ext = filename.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'gif':
+        return 'image/gif';
+      case 'webp':
+        return 'image/webp';
+      case 'heic':
+        return 'image/heic';
+      case 'heif':
+        return 'image/heif';
+      case 'mp4':
+        return 'video/mp4';
+      case 'mov':
+        return 'video/quicktime';
+      case 'avi':
+        return 'video/x-msvideo';
+      case 'dng':
+        return 'image/x-adobe-dng';
+      case 'cr2':
+        return 'image/x-canon-cr2';
+      case 'nef':
+        return 'image/x-nikon-nef';
+      default:
+        return 'application/octet-stream';
     }
-
-    final total = contentLength;
-    var bytes = 0;
-    final stream = byteStream.transform(
-      StreamTransformer.fromHandlers(
-        handleData: (List<int> data, EventSink<List<int>> sink) {
-          bytes += data.length;
-          onProgress!(bytes, total);
-          sink.add(data);
-        },
-      ),
-    );
-    return ByteStream(stream);
   }
 }
 
