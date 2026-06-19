@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:mime/mime.dart';
 import 'dart:io';
 
 import 'package:background_downloader/background_downloader.dart';
@@ -215,36 +216,7 @@ class UploadRepository {
   }
 
   String _guessContentType(String filename) {
-    final ext = filename.split('.').last.toLowerCase();
-    switch (ext) {
-      case 'jpg':
-      case 'jpeg':
-        return 'image/jpeg';
-      case 'png':
-        return 'image/png';
-      case 'gif':
-        return 'image/gif';
-      case 'webp':
-        return 'image/webp';
-      case 'heic':
-        return 'image/heic';
-      case 'heif':
-        return 'image/heif';
-      case 'mp4':
-        return 'video/mp4';
-      case 'mov':
-        return 'video/quicktime';
-      case 'avi':
-        return 'video/x-msvideo';
-      case 'dng':
-        return 'image/x-adobe-dng';
-      case 'cr2':
-        return 'image/x-canon-cr2';
-      case 'nef':
-        return 'image/x-nikon-nef';
-      default:
-        return 'application/octet-stream';
-    }
+    return lookupMimeType(filename) ?? 'application/octet-stream';
   }
 }
 
