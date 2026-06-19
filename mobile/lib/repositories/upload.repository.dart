@@ -110,9 +110,6 @@ class UploadRepository {
     final totalBytes = file.lengthSync();
 
     try {
-      if (cancelToken?.isCompleted == true) {
-        return UploadResult.cancelled();
-      }
 
       // Build TUS metadata header
       final metadataParts = <String>[
@@ -155,10 +152,6 @@ class UploadRepository {
       final fileBytes = await file.readAsBytes();
 
       while (currentOffset < totalBytes) {
-        // Check for cancellation
-        if (cancelToken?.isCompleted == true) {
-          return UploadResult.cancelled();
-        }
 
         final chunkEnd = (currentOffset + _tusChunkSize).clamp(0, totalBytes);
         final chunk = fileBytes.sublist(currentOffset, chunkEnd);
@@ -206,10 +199,6 @@ class UploadRepository {
       // The server sets these when the upload is finalized
       return UploadResult.success(remoteAssetId: 'tus-upload-complete');
     } catch (error, stackTrace) {
-      if (cancelToken?.isCompleted == true) {
-        logger.warning("Upload $logContext was cancelled");
-        return UploadResult.cancelled();
-      }
       logger.warning("Error uploading $logContext: ${error.toString()}: $stackTrace");
       return UploadResult.error(errorMessage: error.toString());
     }
