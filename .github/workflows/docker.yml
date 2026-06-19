@@ -132,7 +132,7 @@ jobs:
             suffixes: '-rocm'
             platforms: linux/amd64
             runner-mapping: '{"linux/amd64": "pokedex-large"}'
-    uses: RyamosThomas/devtools/.github/workflows/multi-runner-build.yml@2078071790a9dcfb6fc92445b6ab1069e74987cf # multi-runner-build-workflow-v3.1.0-fork
+    uses: RyamosThomas/devtools/.github/workflows/multi-runner-build.yml@2f009bbcfded3a5cfe7a35086c66d9a1458eb196 # multi-runner-build-workflow-v3.1.0-fork
     permissions:
       contents: read
       actions: read
@@ -155,7 +155,7 @@ jobs:
     name: Build and Push Server
     needs: pre-job
     if: ${{ fromJSON(needs.pre-job.outputs.should_run).server == true }}
-    uses: RyamosThomas/devtools/.github/workflows/multi-runner-build.yml@2078071790a9dcfb6fc92445b6ab1069e74987cf # multi-runner-build-workflow-v3.1.0-fork
+    uses: RyamosThomas/devtools/.github/workflows/multi-runner-build.yml@2f009bbcfded3a5cfe7a35086c66d9a1458eb196 # multi-runner-build-workflow-v3.1.0-fork
     permissions:
       contents: read
       actions: read
