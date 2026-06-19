@@ -6,7 +6,7 @@ set -euo pipefail
 # Builds server + machine-learning images and optionally pushes
 # ──────────────────────────────────────────────────────────────
 
-DOCKERHUB_USER="${DOCKERHUB_USER:-ryamosthomas}"
+DOCKERHUB_USER="${DOCKERHUB_USER:-kidfearless}"
 TAG="${1:-dev}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
