@@ -154,10 +154,8 @@ export class TusUploadService {
     mkdirSync(finalDir, { recursive: true });
     renameSync(dataPath, finalPath);
 
-    // Clean up TUS temp directory
     rmSync(dir, { recursive: true, force: true });
 
-    // Compute checksum
     const crypto = require('node:crypto');
     const fileBuffer = readFileSync(finalPath);
     const checksum = crypto.createHash('sha1').update(fileBuffer).digest();
@@ -170,7 +168,6 @@ export class TusUploadService {
       mimeType: metadata.contentType,
     };
 
-    // Build DTO from stored fields
     const dto = {
       ...metadata.fields,
       fileCreatedAt: metadata.fields['fileCreatedAt'] || metadata.createdAt,

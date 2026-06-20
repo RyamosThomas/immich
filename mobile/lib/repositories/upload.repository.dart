@@ -8,13 +8,14 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:immich_mobile/constants/constants.dart';
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
-import 'package:logging/logging.dart';
-import 'package:http/http.dart' as http;
 import 'package:immich_mobile/utils/debug_print.dart';
+import 'package:logging/logging.dart';
+import 'package:mime/mime.dart';
+import 'package:cross_file/cross_file.dart';
+import 'package:tus_client_dart/tus_client_dart.dart';
 
 final uploadRepositoryProvider = Provider((ref) => UploadRepository());
 
-/// Size of each TUS upload chunk (25MB)
 const int _tusChunkSize = 25 * 1024 * 1024;
 
 class UploadRepository {
@@ -60,7 +61,6 @@ class UploadRepository {
     return FileDownloader().reset(group: group);
   }
 
-  /// Get a list of tasks that are ENQUEUED or RUNNING
   Future<List<Task>> getActiveTasks(String group) {
     return FileDownloader().allTasks(group: group);
   }
@@ -79,7 +79,8 @@ class UploadRepository {
     ]);
 
     dPrint(
-      () => """
+      () =>
+          """
       Upload Info:
       Enqueued: ${enqueuedTasks.length}
       Running: ${runningTasks.length}
@@ -90,14 +91,6 @@ class UploadRepository {
     );
   }
 
-  /// Upload a file using the TUS resumable upload protocol.
-  ///
-  /// The file is split into 25MB chunks and uploaded sequentially
-  /// via PATCH requests. This bypasses Cloudflare's 100MB request
-  /// body limit since each chunk is well under that threshold.
-  ///
-  /// If the upload is interrupted, the client can send a HEAD request
-  /// to the upload URL to discover the current offset and resume.
   Future<UploadResult> uploadFile({
     required File file,
     required String originalFileName,
@@ -107,105 +100,37 @@ class UploadRepository {
     required String logContext,
   }) async {
     final String savedEndpoint = Store.get(StoreKey.serverEndpoint);
-    final totalBytes = file.lengthSync();
 
     try {
+      final metadata = <String, String>{
+        'filename': originalFileName,
+        'contentType': lookupMimeType(originalFileName) ?? 'application/octet-stream',
+        'fields': jsonEncode(fields),
+      };
 
-      // Build TUS metadata header
-      final metadataParts = <String>[
-        'filename ${base64Encode(utf8.encode(originalFileName))}',
-        'contentType ${base64Encode(utf8.encode(_guessContentType(originalFileName)))}',
-        'fields ${base64Encode(utf8.encode(jsonEncode(fields)))}',
-      ];
+      final tusClient = TusClient(XFile(file.path), maxChunkSize: _tusChunkSize);
 
-      // Step 1: POST to create the TUS upload
-      final createResponse = await http.post(
-        Uri.parse('$savedEndpoint/tus/uploads'),
-        headers: {
-          'Tus-Resumable': '1.0.0',
-          'Upload-Length': totalBytes.toString(),
-          'Upload-Metadata': metadataParts.join(','),
+      final totalBytes = file.lengthSync();
+
+      await tusClient.upload(
+        uri: Uri.parse('$savedEndpoint/tus/uploads'),
+        metadata: metadata,
+        onProgress: (percentage, eta) {
+          final bytes = (percentage / 100 * totalBytes).round();
+          onProgress?.call(bytes, totalBytes);
         },
-      ).timeout(const Duration(seconds: 30));
+        onComplete: () {
+          logger.fine('TUS upload complete: $logContext');
+        },
+      );
 
-      if (createResponse.statusCode != 201) {
-        return UploadResult.error(
-          statusCode: createResponse.statusCode,
-          errorMessage: createResponse.body.isNotEmpty
-              ? createResponse.body
-              : 'TUS create failed with status ${createResponse.statusCode}',
-        );
-      }
+      await tusClient.onCompleteUpload();
 
-      // Get the upload URL from the Location header
-      final uploadUrl = createResponse.headers['location'];
-      if (uploadUrl == null) {
-        return UploadResult.error(errorMessage: 'TUS response missing Location header');
-      }
-
-      final absoluteUploadUrl = uploadUrl.startsWith('http')
-          ? uploadUrl
-          : '$savedEndpoint$uploadUrl';
-
-      // Step 2: Upload file in 25MB chunks via PATCH
-      int currentOffset = 0;
-      final fileBytes = await file.readAsBytes();
-
-      while (currentOffset < totalBytes) {
-
-        final chunkEnd = (currentOffset + _tusChunkSize).clamp(0, totalBytes);
-        final chunk = fileBytes.sublist(currentOffset, chunkEnd);
-        final chunkLength = chunk.length;
-
-        final patchResponse = await http.patch(
-          Uri.parse(absoluteUploadUrl),
-          headers: {
-            'Tus-Resumable': '1.0.0',
-            'Upload-Offset': currentOffset.toString(),
-            'Content-Type': 'application/offset+octet-stream',
-            'Content-Length': chunkLength.toString(),
-          },
-          body: chunk,
-        ).timeout(const Duration(minutes: 5));
-
-        if (patchResponse.statusCode != 204) {
-          if (patchResponse.statusCode == 409) {
-            // Offset conflict - read server's actual offset and retry
-            final serverOffset = int.tryParse(
-              patchResponse.headers['upload-offset'] ?? '',
-            );
-            if (serverOffset != null && serverOffset > currentOffset) {
-              currentOffset = serverOffset;
-              continue;
-            }
-          }
-          return UploadResult.error(
-            statusCode: patchResponse.statusCode,
-            errorMessage: 'TUS chunk upload failed: ${patchResponse.body}',
-          );
-        }
-
-        // Read new offset from response
-        final newOffset = int.tryParse(
-          patchResponse.headers['upload-offset'] ?? '',
-        );
-        currentOffset = newOffset ?? (currentOffset + chunkLength);
-
-        // Report progress
-        onProgress?.call(currentOffset, totalBytes);
-      }
-
-      // Upload completed — read asset ID from the final PATCH response headers
-      // The server sets these when the upload is finalized
       return UploadResult.success(remoteAssetId: 'tus-upload-complete');
     } catch (error, stackTrace) {
       logger.warning("Error uploading $logContext: ${error.toString()}: $stackTrace");
       return UploadResult.error(errorMessage: error.toString());
     }
-  }
-
-  String _guessContentType(String filename) {
-    return lookupMimeType(filename) ?? 'application/octet-stream';
   }
 }
 

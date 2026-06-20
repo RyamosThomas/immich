@@ -282,7 +282,7 @@ packages:
     source: hosted
     version: "1.0.17"
   cross_file:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: cross_file
       sha256: "28bb3ae56f117b5aec029d702a90f57d285cd975c3c5c281eaca38dbc47c5937"
@@ -1635,6 +1635,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.10.2"
+  speed_test_dart:
+    dependency: transitive
+    description:
+      name: speed_test_dart
+      sha256: "4131faa68d5c9259766626450a10e552bc11ff6e651bb6377cc56476443e1cfa"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.5+0"
   sqlite3:
     dependency: "direct main"
     description:
@@ -1715,6 +1723,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.1"
+  sync:
+    dependency: transitive
+    description:
+      name: sync
+      sha256: f2ebb89eac969abb02b498562a35c4da63d6843396c4fe81948cd06a76845fce
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.3.0"
   sync_http:
     dependency: transitive
     description:
@@ -1755,6 +1771,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.9.4"
+  tus_client_dart:
+    dependency: "direct main"
+    description:
+      name: tus_client_dart
+      sha256: dd6bb9f53b0c330480bbd91b7e4f46663b879f836e3b450c17a988e9dd959170
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.5.0"
   typed_data:
     dependency: transitive
     description:

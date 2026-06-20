@@ -26,7 +26,6 @@ export class TusUploadController {
     private tusService: TusUploadService,
   ) {}
 
-  // TUS HEAD - get upload status (used for resume)
   @Head(':id')
   @Authenticated({ permission: 'asset.upload' as any })
   async headUpload(
@@ -49,7 +48,6 @@ export class TusUploadController {
     res.status(HttpStatus.OK).end();
   }
 
-  // TUS POST - create a new upload
   @Post()
   @Authenticated({ permission: 'asset.upload' as any })
   @HttpCode(HttpStatus.CREATED)
@@ -82,7 +80,6 @@ export class TusUploadController {
     res.status(HttpStatus.CREATED).end();
   }
 
-  // TUS PATCH - upload a chunk
   @Patch(':id')
   @Authenticated({ permission: 'asset.upload' as any })
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -111,11 +108,9 @@ export class TusUploadController {
         'Cache-Control': 'no-store',
       });
 
-      // If upload is complete, finalize it (create the asset)
       if (complete) {
         try {
           const result = await this.tusService.finalizeUpload(id, auth);
-          // Include the asset result in a custom header so client can read it
           res.set('Immich-Asset-Id', result.id);
           res.set('Immich-Asset-Status', result.status);
         } catch (error) {
@@ -140,7 +135,6 @@ export class TusUploadController {
     }
   }
 
-  // TUS DELETE - cancel and clean up an upload
   @Delete(':id')
   @Authenticated({ permission: 'asset.upload' as any })
   @HttpCode(HttpStatus.NO_CONTENT)
