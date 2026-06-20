@@ -10,7 +10,6 @@ import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/utils/debug_print.dart';
 import 'package:logging/logging.dart';
-import 'package:mime/mime.dart';
 import 'package:cross_file/cross_file.dart';
 import 'package:tus_client_dart/tus_client_dart.dart';
 
