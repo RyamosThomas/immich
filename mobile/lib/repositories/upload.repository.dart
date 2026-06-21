@@ -11,7 +11,8 @@ import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/utils/debug_print.dart';
 import 'package:logging/logging.dart';
 import 'package:cross_file/cross_file.dart';
-import 'package:tus_client_dart/tus_client_dart.dart';
+import 'package:immich_mobile/utils/immich_tus_client.dart' show ImmichTusClient;
+import 'package:tus_client_dart/tus_client_dart.dart' show ProtocolException;
 
 final uploadRepositoryProvider = Provider((ref) => UploadRepository());
 
@@ -107,7 +108,7 @@ class UploadRepository {
         'fields': jsonEncode(fields),
       };
 
-      final tusClient = TusClient(XFile(file.path), maxChunkSize: _tusChunkSize);
+      final tusClient = ImmichTusClient(XFile(file.path), maxChunkSize: _tusChunkSize);
 
       final totalBytes = file.lengthSync();
 
@@ -123,11 +124,19 @@ class UploadRepository {
         },
       );
 
-      await tusClient.onCompleteUpload();
+      final assetId = tusClient.lastResponseHeaders?['immich-asset-id'];
+      if (assetId == null || assetId.isEmpty) {
+        logger.warning('TUS upload succeeded but no asset ID in response headers for $logContext');
+        return UploadResult.success(remoteAssetId: 'tus-upload-complete');
+      }
 
-      return UploadResult.success(remoteAssetId: 'tus-upload-complete');
+      logger.info('TUS upload $logContext -> asset $assetId');
+      return UploadResult.success(remoteAssetId: assetId);
+    } on ProtocolException catch (error) {
+      logger.warning('TUS protocol error uploading $logContext: ${error.toString()}');
+      return UploadResult.error(errorMessage: error.toString());
     } catch (error, stackTrace) {
-      logger.warning("Error uploading $logContext: ${error.toString()}: $stackTrace");
+      logger.warning('Error uploading $logContext: ${error.toString()}: $stackTrace');
       return UploadResult.error(errorMessage: error.toString());
     }
   }

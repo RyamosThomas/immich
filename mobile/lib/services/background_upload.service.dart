@@ -152,10 +152,11 @@ class BackgroundUploadService {
     return _uploadRepository.getActiveTasks(group);
   }
 
-  /// Start background upload using iOS URLSession
+  /// Start background upload using iOS URLSession or Android TUS
   ///
   /// Finds backup candidates, builds upload tasks, and enqueues them
-  /// for background processing.
+  /// for background processing. On Android, uses TUS protocol for large
+  /// file support; on iOS uses URLSession multipart uploads.
   Future<void> uploadBackupCandidates(String userId) async {
     await _storageRepository.clearCache();
     shouldAbortQueuingTasks = false;
@@ -170,18 +171,22 @@ class BackgroundUploadService {
 
     const batchSize = 100;
     final batch = candidates.take(batchSize).toList();
-    List<UploadTask> tasks = [];
 
-    for (final asset in batch) {
-      final task = await getUploadTask(asset);
-      if (task != null) {
-        tasks.add(task);
+    if (Platform.isAndroid) {
+      await _tusUploadAndroidBatch(batch);
+    } else {
+      List<UploadTask> tasks = [];
+      for (final asset in batch) {
+        final task = await getUploadTask(asset);
+        if (task != null) {
+          tasks.add(task);
+        }
       }
-    }
 
-    if (tasks.isNotEmpty && !shouldAbortQueuingTasks) {
-      _logger.info("Enqueuing ${tasks.length} background upload tasks");
-      await enqueueTasks(tasks);
+      if (tasks.isNotEmpty && !shouldAbortQueuingTasks) {
+        _logger.info("Enqueuing ${tasks.length} background upload tasks");
+        await enqueueTasks(tasks);
+      }
     }
   }
 
@@ -202,6 +207,158 @@ class BackgroundUploadService {
   /// Resume background backup processing
   Future<void> resume() {
     return _uploadRepository.start();
+  }
+
+  /// Android: upload a batch of assets via TUS protocol.
+  Future<void> _tusUploadAndroidBatch(List<LocalAsset> batch) async {
+    for (final asset in batch) {
+      if (shouldAbortQueuingTasks) {
+        break;
+      }
+
+      final requireWifi = _shouldRequireWiFi(asset);
+      if (requireWifi) {
+        _logger.info('Skipping TUS upload for ${asset.id} (WiFi required)');
+        continue;
+      }
+
+      await _tusUploadAndroidAsset(asset);
+    }
+  }
+
+  /// Upload a single asset via TUS on Android background.
+  Future<void> _tusUploadAndroidAsset(LocalAsset asset) async {
+    final entity = await _storageRepository.getAssetEntityForAsset(asset);
+    if (entity == null) {
+      _logger.warning('Asset entity not found for ${asset.id}');
+      return;
+    }
+
+    File? file;
+    File? livePhotoFile;
+
+    if (entity.isLivePhoto) {
+      file = await _storageRepository.getMotionFileForAsset(asset);
+    } else {
+      file = await _storageRepository.getFileForAsset(asset.id);
+    }
+
+    if (file == null) {
+      _logger.warning('Failed to get file for asset ${asset.id}');
+      return;
+    }
+
+    String fileName = await _assetMediaRepository.getOriginalFilename(asset.id) ?? asset.name;
+    final hasExtension = p.extension(fileName).isNotEmpty;
+    if (!hasExtension) {
+      fileName = p.setExtension(fileName, p.extension(asset.name));
+    }
+    final originalFileName = entity.isLivePhoto
+        ? p.setExtension(fileName, p.extension(file.path))
+        : fileName;
+
+    final deviceId = Store.get(StoreKey.deviceId);
+    final fields = <String, String>{
+      'deviceAssetId': asset.localId ?? asset.id,
+      'deviceId': deviceId,
+      'fileCreatedAt': asset.createdAt.toUtc().toIso8601String(),
+      'fileModifiedAt': asset.updatedAt.toUtc().toIso8601String(),
+      'isFavorite': asset.isFavorite.toString(),
+      'duration': (asset.durationMs ?? 0).toString(),
+    };
+
+    final sentinelTask = UploadTask(
+      taskId: asset.id,
+      url: 'http://localhost/',
+      filename: 'tus',
+    );
+
+    final completer = Completer<void>();
+
+    try {
+      // Upload live photo video first
+      String? livePhotoVideoId;
+      if (entity.isLivePhoto) {
+        final livePhotoFields = Map<String, String>.from(fields);
+        final result = await _uploadRepository.uploadFile(
+          file: file,
+          originalFileName: originalFileName,
+          fields: livePhotoFields,
+          cancelToken: completer,
+          onProgress: (bytes, total) {
+            _taskProgressController.add(
+              TaskProgressUpdate(sentinelTask, bytes / total),
+            );
+          },
+          logContext: 'bgLivePhoto[${asset.id}]',
+        );
+
+        if (result.isSuccess && result.remoteAssetId != null) {
+          livePhotoVideoId = result.remoteAssetId;
+        } else {
+          _logger.warning('Failed to upload live photo video for ${asset.id}');
+          _taskStatusController.add(
+            TaskStatusUpdate(sentinelTask, TaskStatus.failed),
+          );
+          return;
+        }
+
+        livePhotoFile = await _storageRepository.getFileForAsset(asset.id);
+        if (livePhotoFile == null) {
+          _logger.warning('Failed to get still image for live photo ${asset.id}');
+          _taskStatusController.add(
+            TaskStatusUpdate(sentinelTask, TaskStatus.failed),
+          );
+          return;
+        }
+      }
+
+      final uploadFields = Map<String, String>.from(fields);
+      if (livePhotoVideoId != null) {
+        uploadFields['livePhotoVideoId'] = livePhotoVideoId;
+      }
+
+      final uploadFile = livePhotoFile ?? file;
+      final uploadName = entity.isLivePhoto
+          ? await _assetMediaRepository.getOriginalFilename(asset.id) ?? asset.name
+          : originalFileName;
+
+      final result = await _uploadRepository.uploadFile(
+        file: uploadFile,
+        originalFileName: uploadName,
+        fields: uploadFields,
+        cancelToken: completer,
+        onProgress: (bytes, total) {
+          _taskProgressController.add(
+            TaskProgressUpdate(sentinelTask, bytes / total),
+          );
+        },
+        logContext: 'bgTus[${asset.id}]',
+      );
+
+      if (result.isSuccess && result.remoteAssetId != null) {
+        _taskStatusController.add(
+          TaskStatusUpdate(sentinelTask, TaskStatus.complete),
+        );
+        _logger.info('Android background TUS upload complete: ${asset.id} -> ${result.remoteAssetId}');
+      } else if (result.errorMessage != null) {
+        _logger.warning('Android background TUS upload failed: ${asset.id} - ${result.errorMessage}');
+        _taskStatusController.add(
+          TaskStatusUpdate(sentinelTask, TaskStatus.failed),
+        );
+      }
+    } catch (error, stackTrace) {
+      _logger.severe('Error in Android background TUS upload: $error', stackTrace);
+      if (!_taskStatusController.isClosed) {
+        _taskStatusController.add(
+          TaskStatusUpdate(sentinelTask, TaskStatus.failed),
+        );
+      }
+    } finally {
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
+    }
   }
 
   void _handleTaskStatusUpdate(TaskStatusUpdate update) async {
