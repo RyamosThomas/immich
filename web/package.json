@@ -68,6 +68,7 @@
     "tailwind-variants": "^3.2.2",
     "thumbhash": "^0.1.1",
     "transformation-matrix": "^3.1.0",
+    "tus-js-client": "^4.3.1",
     "uplot": "^1.6.32"
   },
   "devDependencies": {

@@ -56,8 +56,10 @@ export class TusUploadController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const length = parseInt(req.headers['upload-length'] || '0', 10);
-    const metadataHeader = req.headers['upload-metadata'] as string | undefined;
+    const lengthHeader = req.headers['upload-length'];
+    const length = parseInt(Array.isArray(lengthHeader) ? lengthHeader[0] : lengthHeader || '0', 10);
+    const rawMetadata = req.headers['upload-metadata'];
+    const metadataHeader = Array.isArray(rawMetadata) ? rawMetadata[0] : rawMetadata;
 
     if (!length || length <= 0) {
       res.status(HttpStatus.BAD_REQUEST).json({ error: 'Upload-Length header required' });
@@ -89,7 +91,8 @@ export class TusUploadController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const offset = parseInt(req.headers['upload-offset'] || '-1', 10);
+    const offsetHeader = req.headers['upload-offset'];
+    const offset = parseInt(Array.isArray(offsetHeader) ? offsetHeader[0] : offsetHeader || '-1', 10);
     if (offset < 0) {
       res.status(HttpStatus.BAD_REQUEST).json({ error: 'Upload-Offset header required' });
       return;

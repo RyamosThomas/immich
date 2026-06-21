@@ -196,6 +196,7 @@ export const endpointTags: Record<ApiTag, string> = {
     'Specialized endpoints related to the timeline implementation used in the web application. External applications or tools should not use or rely on these endpoints, as they are subject to change without notice.',
   [ApiTag.Trash]:
     'Endpoints for managing the trash can, which includes assets that have been discarded. Items in the trash are automatically deleted after a configured amount of time.',
+  [ApiTag.TusUpload]: 'Endpoints for resumable file uploads using the TUS protocol.',
   [ApiTag.UsersAdmin]:
     'Administrative endpoints for managing users, including creating, updating, deleting, and restoring users. Also includes endpoints for resetting passwords and PIN codes.',
   [ApiTag.Users]:

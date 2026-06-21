@@ -1,3 +1,5 @@
+import { Upload } from 'tus-js-client';
+
 import {
   AssetMediaStatus,
   AssetUploadAction,
@@ -211,20 +213,43 @@ async function fileUploader({
     }
 
     if (!responseData) {
-      const queryParams = asQueryString(authManager.params);
-
       uploadAssetsStore.updateItem(deviceAssetId, { message: $t('asset_uploading') });
-      const response = await uploadRequest<AssetMediaResponseDto>({
-        url: getBaseUrl() + '/assets' + (queryParams ? `?${queryParams}` : ''),
-        data: formData,
-        onUploadProgress: (event) => uploadAssetsStore.updateProgress(deviceAssetId, event.loaded, event.total),
-      });
 
-      if (![200, 201].includes(response.status)) {
-        throw new Error($t('errors.unable_to_upload_file'));
+      const baseUrl = getBaseUrl();
+      const queryParams = asQueryString(authManager.params);
+      const tusEndpoint = baseUrl + '/tus/uploads' + (queryParams ? `?${queryParams}` : '');
+
+      const fields: Record<string, string> = {
+        fileCreatedAt,
+        fileModifiedAt: new Date(assetFile.lastModified).toISOString(),
+      };
+      if (isLockedAssets) {
+        fields.visibility = AssetVisibility.Locked;
       }
 
-      responseData = response.data;
+      responseData = await new Promise<{ id: string; status: AssetMediaStatus; isTrashed?: boolean }>((resolve, reject) => {
+        const upload = new Upload(assetFile, {
+          endpoint: tusEndpoint,
+          chunkSize: 25 * 1024 * 1024,
+          metadata: {
+            filename: assetFile.name,
+            contentType: assetFile.type || 'application/octet-stream',
+            fields: JSON.stringify(fields),
+          },
+          onProgress: (bytesSent, bytesTotal) => {
+            uploadAssetsStore.updateProgress(deviceAssetId, bytesSent, bytesTotal);
+          },
+          onSuccess: () => {
+            uploadAssetsStore.updateProgress(deviceAssetId, assetFile.size, assetFile.size);
+            resolve({ id: 'tus-upload-complete', status: AssetMediaStatus.Created });
+          },
+          onError: (error) => {
+            reject(error);
+          },
+        });
+
+        upload.start();
+      });
     }
 
     if (responseData.status === AssetMediaStatus.Duplicate) {

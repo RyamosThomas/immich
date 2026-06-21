@@ -4,8 +4,9 @@ import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync, 
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { LoggingRepository } from 'src/repositories/logging.repository';
-import { StorageRepository } from 'src/repositories/storage.repository';
+import { StorageCore } from 'src/cores/storage.core';
 import { AssetMediaService } from 'src/services/asset-media.service';
+import { AssetMediaResponseDto } from 'src/dtos/asset-media-response.dto';
 import { StorageFolder } from 'src/enum';
 
 interface TusUploadMetadata {
@@ -23,12 +24,12 @@ interface TusUploadMetadata {
 export class TusUploadService {
   constructor(
     private logger: LoggingRepository,
-    private storageRepository: StorageRepository,
+    
     private assetMediaService: AssetMediaService,
   ) {}
 
   private getUploadDir(uploadId: string): string {
-    return join(this.storageRepository.getBaseFolder(StorageFolder.Upload), 'tus', uploadId);
+    return join(StorageCore.getBaseFolder(StorageFolder.Upload), 'tus', uploadId);
   }
 
   private getDataPath(uploadId: string): string {
@@ -131,7 +132,7 @@ export class TusUploadService {
     return { newOffset: metadata.offset, complete };
   }
 
-  async finalizeUpload(uploadId: string, auth: any): Promise<{ id: string; status: string }> {
+  async finalizeUpload(uploadId: string, auth: any): Promise<AssetMediaResponseDto> {
     const metadata = await this.getUploadStatus(uploadId);
     if (!metadata) {
       throw new Error('Upload not found');
@@ -144,7 +145,7 @@ export class TusUploadService {
       ? '.' + metadata.filename.split('.').pop()
       : '';
     const finalDir = join(
-      this.storageRepository.getBaseFolder(StorageFolder.Upload),
+      StorageCore.getBaseFolder(StorageFolder.Upload),
       metadata.userId,
       uploadId,
     );
@@ -154,18 +155,16 @@ export class TusUploadService {
     mkdirSync(finalDir, { recursive: true });
     renameSync(dataPath, finalPath);
 
-    rmSync(dir, { recursive: true, force: true });
-
     const crypto = require('node:crypto');
     const fileBuffer = readFileSync(finalPath);
     const checksum = crypto.createHash('sha1').update(fileBuffer).digest();
 
     const uploadFile = {
-      path: finalPath,
-      size: metadata.length,
+      uuid: uploadId,
       checksum: Buffer.from(checksum),
+      originalPath: finalPath,
       originalName: metadata.filename,
-      mimeType: metadata.contentType,
+      size: metadata.length,
     };
 
     const dto = {
@@ -175,14 +174,18 @@ export class TusUploadService {
       filename: metadata.filename,
     };
 
-    const result = await this.assetMediaService.uploadAsset(
-      auth,
-      dto as any,
-      uploadFile as any,
-      undefined,
-    );
+    try {
+      const result = await this.assetMediaService.uploadAsset(
+        auth,
+        dto as any,
+        uploadFile as any,
+        undefined,
+      );
 
-    return result;
+      return result;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 
   async deleteUpload(uploadId: string): Promise<void> {

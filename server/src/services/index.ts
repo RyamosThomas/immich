@@ -43,6 +43,7 @@ import { TelemetryService } from 'src/services/telemetry.service';
 import { TimelineService } from 'src/services/timeline.service';
 import { TranscodingService } from 'src/services/transcoding.service';
 import { TrashService } from 'src/services/trash.service';
+import { TusUploadService } from 'src/services/tus-upload.service';
 import { UserAdminService } from 'src/services/user-admin.service';
 import { UserService } from 'src/services/user.service';
 import { VersionService } from 'src/services/version.service';
@@ -96,6 +97,7 @@ export const services = [
   TimelineService,
   TranscodingService,
   TrashService,
+  TusUploadService,
   UserAdminService,
   UserService,
   VersionService,
