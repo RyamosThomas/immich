@@ -11,8 +11,8 @@ import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/utils/debug_print.dart';
 import 'package:logging/logging.dart';
 import 'package:cross_file/cross_file.dart';
+import 'package:immich_mobile/infrastructure/repositories/network.repository.dart';
 import 'package:immich_mobile/utils/immich_tus_client.dart' show ImmichTusClient;
-import 'package:tus_client_dart/tus_client_dart.dart' show ProtocolException;
 
 final uploadRepositoryProvider = Provider((ref) => UploadRepository());
 
@@ -108,16 +108,17 @@ class UploadRepository {
         'fields': jsonEncode(fields),
       };
 
-      final tusClient = ImmichTusClient(XFile(file.path), maxChunkSize: _tusChunkSize);
-
-      final totalBytes = file.lengthSync();
+      final tusClient = ImmichTusClient(
+        XFile(file.path),
+        maxChunkSize: _tusChunkSize,
+        httpClient: NetworkRepository.client,
+      );
 
       await tusClient.upload(
         uri: Uri.parse('$savedEndpoint/tus/uploads'),
         metadata: metadata,
-        onProgress: (percentage, eta) {
-          final bytes = (percentage / 100 * totalBytes).round();
-          onProgress?.call(bytes, totalBytes);
+        onProgress: (bytes, total) {
+          onProgress?.call(bytes, total);
         },
         onComplete: () {
           logger.fine('TUS upload complete: $logContext');
@@ -132,9 +133,6 @@ class UploadRepository {
 
       logger.info('TUS upload $logContext -> asset $assetId');
       return UploadResult.success(remoteAssetId: assetId);
-    } on ProtocolException catch (error) {
-      logger.warning('TUS protocol error uploading $logContext: ${error.toString()}');
-      return UploadResult.error(errorMessage: error.toString());
     } catch (error, stackTrace) {
       logger.warning('Error uploading $logContext: ${error.toString()}: $stackTrace');
       return UploadResult.error(errorMessage: error.toString());
